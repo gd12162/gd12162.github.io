@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Vision + 4 Areas</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <style>
+      html, body, #root { height: 100%; margin: 0; font-family: system-ui, -apple-system; background: #fafafa; }
+      .diag { position: fixed; inset: auto 12px 12px 12px; background:#111; color:#0f0; font:12px/1.4 ui-monospace, Menlo, monospace; padding:10px; border-radius:10px; max-height:40vh; overflow:auto; }
+      .hide { display:none; }
+      .loading { padding: 24px; color:#444; }
+      .btn { display:inline-block; padding:6px 10px; border-radius:10px; border:1px solid #ddd; background:white; }
+    </style>
+  </head>
+  <body>
+    <div id="root"><div class="loading">앱을 불러오는 중…</div></div>
+    <div id="diag" class="diag hide"></div>
+
+    <script>
+      // Diagnostics: show any JS errors on page
+      const diag = document.getElementById('diag');
+      function logDiag(msg) { diag.classList.remove('hide'); diag.innerText += msg + "\\n"; }
+      window.addEventListener('error', (e) => { logDiag("[error] " + (e.message || e.error)); });
+      window.addEventListener('unhandledrejection', (e) => { logDiag("[promise] " + (e.reason && (e.reason.stack || e.reason.message) || e.reason)); });
+
+      // Register SW
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/sw.js').catch(err => logDiag("[sw.register] " + err));
+      }
+    </script>
+
+    <!-- React UMD from unpkg (widely reachable). If blocked, the diagnostics will show. -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin onerror="logDiag('React UMD 로드 실패')"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin onerror="logDiag('ReactDOM UMD 로드 실패')"></script>
+
+    <script>
+      (function(){
+        if (!window.React || !window.ReactDOM) {
+          logDiag("React/ReactDOM이 로드되지 않았습니다. 네트워크 차단 혹은 CDN 차단일 수 있습니다.");
+          document.getElementById('root').innerHTML = '<div style="padding:24px">네트워크 문제로 스크립트를 불러오지 못했습니다. 잠시 후 다시 시도하거나 다른 네트워크에서 열어보세요.</div>';
+          return;
+        }
+        const e = React.createElement;
+        function App(){
+          const [count, setCount] = React.useState(0);
+          return e('div', {style:{padding:'24px'}},
+            e('h1', null, 'V4A 부트 테스트 ✅'),
+            e('p', null, '이 화면이 보이면 빌드/라우팅/JS 로딩이 정상입니다.'),
+            e('button', {className:'btn', onClick:()=>setCount(count+1)}, '버튼 ', count)
+          );
+        }
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(e(App));
+      })();
+    </script>
+
+    <!-- .nojekyll to disable Jekyll processing -->
+  </body>
+</html>
