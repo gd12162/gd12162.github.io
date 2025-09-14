@@ -1,4 +1,4 @@
-const CACHE_NAME = 'v4a-cache-root-umd-v1';
+const CACHE_NAME = 'v4a-cache-root-umd-v2';
 const PRECACHE_URLS = ['/', '/index.html', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
 
 self.addEventListener('install', (event) => {
@@ -17,12 +17,10 @@ self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
   event.respondWith(
-    fetch(req)
-      .then((resp) => {
-        const copy = resp.clone();
-        caches.open(CACHE_NAME).then((c) => c.put(req, copy));
-        return resp;
-      })
-      .catch(() => caches.match(req).then((r) => r || caches.match('/index.html')))
+    fetch(req).then((resp) => {
+      const copy = resp.clone();
+      caches.open(CACHE_NAME).then((c) => c.put(req, copy));
+      return resp;
+    }).catch(() => caches.match(req).then((r) => r || caches.match('/index.html')))
   );
 });

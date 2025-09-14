@@ -15,10 +15,9 @@
       body { background: #fafafa; }
       .btn { padding: 4px 8px; border-radius: 10px; background: #f3f4f6; }
       .btn-red { background: #fef2f2; color: #b91c1c; }
-      .icon { font-style: normal; }
-      .tip { font-size: 12px; color: #6b7280; }
       .bar { position: sticky; top: 0; z-index: 50; backdrop-filter: blur(6px); background: rgba(250,250,250,0.8); border-bottom: 1px solid #e5e7eb; }
       .nav { position: fixed; bottom: 0; inset-inline: 0; z-index: 50; background: white; border-top: 1px solid #e5e7eb; box-shadow: 0 -1px 3px rgba(0,0,0,0.03); }
+      .toast { position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); background: #111; color: #fff; padding: 10px 14px; border-radius: 12px; font-size: 12px; opacity: 0.95; }
     </style>
   </head>
   <body>
@@ -32,14 +31,41 @@
         const { useState, useEffect, useRef } = React;
         const e = React.createElement;
 
-        const STORAGE_KEY = "vb_weekly_tracker_v1";
+        // ---------- IndexedDB helpers (fallback to localStorage) ----------
+        const DB_NAME = 'v4a-db';
+        const STORE = 'kv';
+        function idbOpen(){
+          return new Promise((resolve, reject)=>{
+            if(!('indexedDB' in window)) return resolve(null);
+            const req = indexedDB.open(DB_NAME, 1);
+            req.onupgradeneeded = () => { try { req.result.createObjectStore(STORE); } catch(e){} };
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => resolve(null); // fallback if blocked
+          });
+        }
+        async function idbGet(key){
+          const db = await idbOpen(); if(!db) return null;
+          return new Promise((resolve)=>{
+            const tx = db.transaction(STORE, 'readonly');
+            const store = tx.objectStore(STORE);
+            const rq = store.get(key);
+            rq.onsuccess = () => resolve(rq.result || null);
+            rq.onerror = () => resolve(null);
+          });
+        }
+        async function idbSet(key, val){
+          const db = await idbOpen(); if(!db) return false;
+          return new Promise((resolve)=>{
+            const tx = db.transaction(STORE, 'readwrite');
+            const store = tx.objectStore(STORE);
+            store.put(val, key);
+            tx.oncomplete = () => resolve(true);
+            tx.onerror = () => resolve(false);
+          });
+        }
+
+        // ---------- Utilities ----------
         function uid(){ return Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4); }
-        const DEFAULT_AREAS = [
-          { id: uid(), name: "돈/일 (Wealth/Work)", color: "bg-emerald-50", goals: [] },
-          { id: uid(), name: "신앙 (Faith)", color: "bg-indigo-50", goals: [] },
-          { id: uid(), name: "가족 (Family)", color: "bg-rose-50", goals: [] },
-          { id: uid(), name: "나 (Self)", color: "bg-amber-50", goals: [] },
-        ];
         function startOfWeek(date = new Date()) { const d = new Date(date); const day = (d.getDay()+6)%7; d.setDate(d.getDate()-day); d.setHours(0,0,0,0); return d; }
         function formatWeek(d){ const end = new Date(d); end.setDate(end.getDate()+6); const f = x => x.toLocaleDateString(undefined,{month:"short", day:"numeric"}); return `${f(d)} – ${f(end)}`; }
         function deepClone(x){ return JSON.parse(JSON.stringify(x)); }
@@ -47,18 +73,55 @@
         function countProgress(area){ let total=0,done=0; for(const g of area.goals){ total++; if(g.completed) done++; for(const a of g.actions||[]){ total++; if(a.completed) done++; for(const s of a.subtasks||[]){ total++; if(s.completed) done++; }}} return {total,done}; }
         function isiOS(){ return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); }
 
-        function useLocalStorage(key, initialValue){
-          const [value, setValue] = useState(() => {
-            try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : initialValue; }
-            catch { return initialValue; }
+        // Image compression: scale to max 1280, jpeg q=0.82
+        function compressImageFile(file){
+          return new Promise((resolve, reject)=>{
+            const img = new Image();
+            const reader = new FileReader();
+            reader.onload = () => {
+              img.onload = () => {
+                const maxSide = 1280;
+                let { width, height } = img;
+                if (width > maxSide || height > maxSide) {
+                  const ratio = Math.min(maxSide/width, maxSide/height);
+                  width = Math.round(width * ratio);
+                  height = Math.round(height * ratio);
+                }
+                const canvas = document.createElement('canvas');
+                canvas.width = width; canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, width, height);
+                try {
+                  const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+                  resolve(dataUrl);
+                } catch (err) { reject(err); }
+              };
+              img.onerror = () => reject(new Error('이미지를 읽을 수 없어요.'));
+              img.src = reader.result;
+            };
+            reader.onerror = () => reject(new Error('파일을 읽을 수 없어요.'));
+            reader.readAsDataURL(file);
           });
-          useEffect(() => { localStorage.setItem(key, JSON.stringify(value)); }, [key, value]);
-          return [value, setValue];
         }
 
+        function showToast(msg){
+          const el = document.createElement('div');
+          el.className = 'toast';
+          el.textContent = msg;
+          document.body.appendChild(el);
+          setTimeout(()=>{ el.remove(); }, 2600);
+        }
+
+        // ---------- Storage Hook (IDB first, LS fallback) ----------
+        const STORAGE_KEY = 'vb_weekly_tracker_v1';
         function createInitialDB(){
           const week0 = startOfWeek(new Date());
-          const areas = deepClone(DEFAULT_AREAS);
+          const areas = [
+            { id: uid(), name: "돈/일 (Wealth/Work)", color: "bg-emerald-50", goals: [] },
+            { id: uid(), name: "신앙 (Faith)", color: "bg-indigo-50", goals: [] },
+            { id: uid(), name: "가족 (Family)", color: "bg-rose-50", goals: [] },
+            { id: uid(), name: "나 (Self)", color: "bg-amber-50", goals: [] },
+          ];
           areas[0].goals = [{ id: uid(), title: "매출 파이프라인 점검", completed: false, actions:[{ id: uid(), title: "잠재고객 10건 콜드리치", completed:false, subtasks:[{id:uid(), title:"리스트 업데이트", completed:false}, {id:uid(), title:"스크립트 다듬기", completed:false}]}]}];
           areas[1].goals = [{ id: uid(), title: "매일 10분 묵상", completed: false, actions: [] }];
           areas[2].goals = [{ id: uid(), title: "가족 저녁 2회", completed: false, actions: [{ id: uid(), title: "수요일 일정 비우기", completed:false, subtasks: [] }]}];
@@ -67,50 +130,199 @@
           db.activeWeekId = db.weeks[0].id; return db;
         }
 
-        function App(){
-          const [db, setDb] = useLocalStorage(STORAGE_KEY, createInitialDB());
-          const [page, setPage] = useState("dashboard");
-          const [vision, setVision] = useState(db.vision || { imageDataUrl: "", imageUrl: "" });
-          const [activeWeekId, setActiveWeekId] = useState(db.activeWeekId);
-          const activeWeek = db.weeks.find((w) => w.id === activeWeekId) || db.weeks[0];
+        function usePersistentDB(){
+          const [db, setDb] = useState(null);
+          // load
+          useEffect(()=>{
+            (async()=>{
+              // try IDB
+              let loaded = await idbGet(STORAGE_KEY);
+              if (!loaded) {
+                // then localStorage
+                try {
+                  const raw = localStorage.getItem(STORAGE_KEY);
+                  loaded = raw ? JSON.parse(raw) : null;
+                } catch {}
+              }
+              if (!loaded) loaded = createInitialDB();
+              setDb(loaded);
+            })();
+          }, []);
+          // save
+          useEffect(()=>{
+            if(!db) return;
+            (async()=>{
+              const ok = await idbSet(STORAGE_KEY, db);
+              try { localStorage.setItem(STORAGE_KEY, JSON.stringify(db)); } catch(e){ /* ignore quota */ }
+              if (!ok) {
+                // If IDB blocked (rare), at least LS is tried above
+              }
+            })();
+          }, [db]);
+          return [db, setDb];
+        }
 
-          useEffect(()=>{ setDb(prev=>({ ...prev, vision })); }, [vision.imageDataUrl, vision.imageUrl]);
-          useEffect(()=>{ setDb(prev=>({ ...prev, activeWeekId })); }, [activeWeekId]);
+        // ---------- App ----------
+        function App(){
+          const [db, setDb] = usePersistentDB();
+          const [page, setPage] = useState("dashboard");
+          const [vision, setVision] = useState({ imageDataUrl: "", imageUrl: "" });
+          const [activeWeekId, setActiveWeekId] = useState(null);
+
+          // hydrate from db
+          useEffect(()=>{
+            if(!db) return;
+            setVision(db.vision || { imageDataUrl: "", imageUrl: "" });
+            setActiveWeekId(db.activeWeekId || (db.weeks[0] && db.weeks[0].id));
+          }, [db]);
 
           useEffect(()=>{ if('serviceWorker' in navigator){ navigator.serviceWorker.register('/sw.js').catch(()=>{}); } },[]);
 
+          if(!db) return e("div",{className:"p-6 text-sm text-neutral-600"},"불러오는 중…");
+
+          const activeWeek = db.weeks.find((w)=>w.id===activeWeekId) || db.weeks[0];
           const weekIndex = db.weeks.findIndex((w)=>w.id===activeWeek?.id);
+
+          function patchDb(mutator){
+            const next = JSON.parse(JSON.stringify(db));
+            mutator(next);
+            setDb(next);
+          }
+
           function gotoPrevWeek(){ if(weekIndex>0) setActiveWeekId(db.weeks[weekIndex-1].id); }
           function gotoNextWeek(){ if(weekIndex<db.weeks.length-1) setActiveWeekId(db.weeks[weekIndex+1].id); }
-          function startNewWeek(){ const last=db.weeks[db.weeks.length-1]; const base=deepClone(last); base.id=uid(); const nextStart=new Date(last.weekStartISO); nextStart.setDate(nextStart.getDate()+7); base.weekStartISO=nextStart.toISOString(); base.areas=base.areas.map(a=>resetCompletion(a)); base.notes=""; setDb(prev=>({...prev, weeks:[...prev.weeks, base], activeWeekId: base.id })); }
-          function replaceWeek(updated){ setDb(prev=>({ ...prev, weeks: prev.weeks.map((w)=>w.id===updated.id?updated:w) })); }
-          function setAreaName(areaId, name){ const w=deepClone(activeWeek); const area=w.areas.find(a=>a.id===areaId); if(area) area.name=name; replaceWeek(w); }
-          function addGoal(areaId){ const w=deepClone(activeWeek); const area=w.areas.find(a=>a.id===areaId); if(!area) return; area.goals.push({ id: uid(), title: "새 목표", completed:false, actions: []}); replaceWeek(w); }
-          function toggleCompleted(kind, ids){ const w=deepClone(activeWeek); for(const area of w.areas){ if(kind==="goal"){ const g=area.goals.find(g=>g.id===ids.goalId); if(g) g.completed=!g.completed; } else if(kind==="action"){ for(const g of area.goals){ const a=g.actions.find(a=>a.id===ids.actionId); if(a) a.completed=!a.completed; } } else if(kind==="subtask"){ for(const g of area.goals){ for(const a of g.actions){ const s=a.subtasks?.find(s=>s.id===ids.subtaskId); if(s) s.completed=!s.completed; }}} } replaceWeek(w); }
-          function setTitle(kind, ids, title){ const w=deepClone(activeWeek); for(const area of w.areas){ for(const g of area.goals){ if(kind==="goal" && g.id===ids.goalId) g.title=title; for(const a of g.actions){ if(kind==="action" && a.id===ids.actionId) a.title=title; for(const s of a.subtasks||[]){ if(kind==="subtask" && s.id===ids.subtaskId) s.title=title; }}}} replaceWeek(w); }
-          function addAction(goalId){ const w=deepClone(activeWeek); for(const area of w.areas){ for(const g of area.goals){ if(g.id===goalId){ g.actions.push({ id: uid(), title: "새 행동", completed:false, subtasks: []}); }}} replaceWeek(w); }
-          function addSubtask(actionId){ const w=deepClone(activeWeek); for(const area of w.areas){ for(const g of area.goals){ for(const a of g.actions){ if(a.id===actionId){ a.subtasks=a.subtasks||[]; a.subtasks.push({ id: uid(), title: "세부 작업", completed:false}); }}}} replaceWeek(w); }
-          function removeItem(kind, ids){ const w=deepClone(activeWeek); for(const area of w.areas){ if(kind==="goal"){ area.goals = area.goals.filter(g=>g.id!==ids.goalId); } else { for(const g of area.goals){ if(kind==="action") g.actions = g.actions.filter(a=>a.id!==ids.actionId); if(kind==="subtask") for(const a of g.actions) a.subtasks=(a.subtasks||[]).filter(s=>s.id!==ids.subtaskId); }}} replaceWeek(w); }
-          function moveItem(kind, ids, dir){ const w=deepClone(activeWeek); function move(arr, idKey, id){ const idx=arr.findIndex(x=>x[idKey]===id); if(idx<0) return; const ni=idx+dir; if(ni<0||ni>=arr.length) return; const t=arr[idx]; arr[idx]=arr[ni]; arr[ni]=t; } for(const area of w.areas){ if(kind==="goal") move(area.goals, "id", ids.goalId); for(const g of area.goals){ if(kind==="action") move(g.actions, "id", ids.actionId); for(const a of g.actions){ if(kind==="subtask") move(a.subtasks||[], "id", ids.subtaskId); }}} replaceWeek(w); }
-          function exportJson(){ const blob = new Blob([JSON.stringify(db,null,2)], {type:"application/json"}); const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download=`vb_tracker_${new Date().toISOString().slice(0,10)}.json`; a.click(); URL.revokeObjectURL(url); }
-          function onImportJson(e){ const file=e.target.files?.[0]; if(!file) return; const reader=new FileReader(); reader.onload=()=>{ try{ const parsed=JSON.parse(reader.result); setDb(parsed); setVision(parsed.vision||{imageDataUrl:"", imageUrl:""}); setActiveWeekId(parsed.activeWeekId || parsed.weeks?.[parsed.weeks.length-1]?.id);}catch{ alert("JSON 파일을 읽을 수 없어요."); } }; reader.readAsText(file); }
+          function startNewWeek(){
+            patchDb((next)=>{
+              const last = next.weeks[next.weeks.length-1];
+              const base = JSON.parse(JSON.stringify(last));
+              base.id = uid();
+              const nextStart = new Date(last.weekStartISO);
+              nextStart.setDate(nextStart.getDate()+7);
+              base.weekStartISO = nextStart.toISOString();
+              base.areas = base.areas.map(a=>resetCompletion(a));
+              base.notes = "";
+              next.weeks.push(base);
+              next.activeWeekId = base.id;
+            });
+          }
+          function replaceWeek(updated){
+            patchDb((next)=>{
+              next.weeks = next.weeks.map((w)=> w.id===updated.id ? updated : w);
+            });
+          }
+          function setAreaName(areaId, name){
+            const w = JSON.parse(JSON.stringify(activeWeek));
+            const area = w.areas.find(a=>a.id===areaId); if(area) area.name = name;
+            replaceWeek(w);
+          }
+          function addGoal(areaId){
+            const w = JSON.parse(JSON.stringify(activeWeek));
+            const area = w.areas.find(a=>a.id===areaId); if(!area) return;
+            area.goals.push({ id: uid(), title: "새 목표", completed:false, actions: [] });
+            replaceWeek(w);
+          }
+          function toggleCompleted(kind, ids){
+            const w = JSON.parse(JSON.stringify(activeWeek));
+            for(const area of w.areas){
+              if(kind==="goal"){
+                const g = area.goals.find(g=>g.id===ids.goalId); if(g) g.completed=!g.completed;
+              } else if(kind==="action"){
+                for(const g of area.goals){ const a=g.actions.find(a=>a.id===ids.actionId); if(a) a.completed=!a.completed; }
+              } else if(kind==="subtask"){
+                for(const g of area.goals){ for(const a of g.actions){ const s=(a.subtasks||[]).find(s=>s.id===ids.subtaskId); if(s) s.completed=!s.completed; } }
+              }
+            }
+            replaceWeek(w);
+          }
+          function setTitle(kind, ids, title){
+            const w = JSON.parse(JSON.stringify(activeWeek));
+            for(const area of w.areas){
+              for(const g of area.goals){
+                if(kind==="goal" && g.id===ids.goalId) g.title = title;
+                for(const a of g.actions){
+                  if(kind==="action" && a.id===ids.actionId) a.title = title;
+                  for(const s of a.subtasks||[]){
+                    if(kind==="subtask" && s.id===ids.subtaskId) s.title = title;
+                  }
+                }
+              }
+            }
+            replaceWeek(w);
+          }
+          function addAction(goalId){
+            const w = JSON.parse(JSON.stringify(activeWeek));
+            for(const area of w.areas){ for(const g of area.goals){ if(g.id===goalId){ g.actions.push({ id: uid(), title: "새 행동", completed:false, subtasks: []}); } } }
+            replaceWeek(w);
+          }
+          function addSubtask(actionId){
+            const w = JSON.parse(JSON.stringify(activeWeek));
+            for(const area of w.areas){ for(const g of area.goals){ for(const a of g.actions){ if(a.id===actionId){ a.subtasks=a.subtasks||[]; a.subtasks.push({ id: uid(), title: "세부 작업", completed:false}); } } } }
+            replaceWeek(w);
+          }
+          function removeItem(kind, ids){
+            const w = JSON.parse(JSON.stringify(activeWeek));
+            for(const area of w.areas){
+              if(kind==="goal") area.goals = area.goals.filter(g=>g.id!==ids.goalId);
+              else {
+                for(const g of area.goals){
+                  if(kind==="action") g.actions = g.actions.filter(a=>a.id!==ids.actionId);
+                  if(kind==="subtask") for(const a of g.actions) a.subtasks=(a.subtasks||[]).filter(s=>s.id!==ids.subtaskId);
+                }
+              }
+            }
+            replaceWeek(w);
+          }
+          function moveItem(kind, ids, dir){
+            const w = JSON.parse(JSON.stringify(activeWeek));
+            function move(arr, idKey, id){ const idx = arr.findIndex(x=>x[idKey]===id); if(idx<0) return; const ni = idx+dir; if(ni<0||ni>=arr.length) return; const t=arr[idx]; arr[idx]=arr[ni]; arr[ni]=t; }
+            for(const area of w.areas){
+              if(kind==="goal") move(area.goals, "id", ids.goalId);
+              for(const g of area.goals){
+                if(kind==="action") move(g.actions, "id", ids.actionId);
+                for(const a of g.actions){ if(kind==="subtask") move(a.subtasks||[], "id", ids.subtaskId); }
+              }
+            }
+            replaceWeek(w);
+          }
 
+          // Vision state sync
+          useEffect(()=>{
+            patchDb((next)=>{ next.vision = vision; });
+          }, [vision.imageDataUrl, vision.imageUrl]);
+
+          // Render UI
           return e("div",{className:"min-h-screen bg-neutral-50 text-neutral-900"},
-            e(TopBar,{page, setPage, onExport:exportJson, onImport:onImportJson}),
-            e("div",{className:"max-w-screen-sm mx-auto px-3 mt-2 tip"},"Safari → 공유 → 홈 화면에 추가 (PWA 설치)"),
+            e(TopBar,{page, setPage, onExport:()=>{
+              const blob = new Blob([JSON.stringify(db,null,2)], {type:"application/json"});
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a"); a.href=url; a.download=`vb_tracker_${new Date().toISOString().slice(0,10)}.json`; a.click();
+              URL.revokeObjectURL(url);
+            }, onImport:(ev)=>{
+              const file = ev.target.files && ev.target.files[0]; if(!file) return;
+              const reader = new FileReader();
+              reader.onload = () => {
+                try{
+                  const parsed = JSON.parse(reader.result);
+                  setDb(parsed);
+                  setVision(parsed.vision || { imageDataUrl:"", imageUrl:"" });
+                  setActiveWeekId(parsed.activeWeekId || (parsed.weeks && parsed.weeks[parsed.weeks.length-1] && parsed.weeks[parsed.weeks.length-1].id));
+                }catch{ alert("JSON 파일을 읽을 수 없어요."); }
+              };
+              reader.readAsText(file);
+            }}),
+            e("div",{className:"max-w-screen-sm mx-auto px-3 mt-2 text-xs text-neutral-600"},
+              "아이폰에 설치하려면 Safari → 공유 → 홈 화면에 추가"
+            ),
             page==="dashboard" && e("main",{className:"p-3 pb-24 max-w-screen-sm mx-auto"},
               e(VisionBoard,{vision, setVision}),
               e("div",{className:"mt-4 flex items-center justify-between"},
-                e("button",{onClick:gotoPrevWeek, className:"px-2 py-1 rounded-xl bg-white shadow flex items-center gap-1"},
-                  e("span",{className:"icon"},"◀︎"), " 이전"),
+                e("button",{onClick:gotoPrevWeek, className:"px-2 py-1 rounded-xl bg-white shadow flex items-center gap-1"}, "◀︎ 이전"),
                 e("div",{className:"text-sm font-semibold text-neutral-600"}, formatWeek(new Date(activeWeek.weekStartISO))),
-                e("button",{onClick:gotoNextWeek, className:"px-2 py-1 rounded-xl bg-white shadow flex items-center gap-1"}, "다음 ", e("span",{className:"icon"},"▶︎"))
+                e("button",{onClick:gotoNextWeek, className:"px-2 py-1 rounded-xl bg-white shadow flex items-center gap-1"}, "다음 ▶︎")
               ),
               e("div",{className:"mt-2 flex items-center justify-between"},
-                e("div",{className:"text-xs text-neutral-500 flex items-center gap-2"},
-                  e("span",{className:"icon"},"📅"), "현재 주간 계획"),
-                e("button",{onClick:startNewWeek, className:"px-3 py-1 rounded-xl bg-black text-white text-xs flex items-center gap-2 shadow"},
-                  e("span",{className:"icon"},"⟳"), " 새 주 시작")
+                e("div",{className:"text-xs text-neutral-500 flex items-center gap-2"}, "📅 현재 주간 계획"),
+                e("button",{onClick:startNewWeek, className:"px-3 py-1 rounded-xl bg-black text-white text-xs flex items-center gap-2 shadow"}, "⟳ 새 주 시작")
               ),
               e("div",{className:"mt-4 grid grid-cols-1 gap-3"},
                 activeWeek.areas.map((area)=>
@@ -139,10 +351,8 @@
             e("div",{className:"max-w-screen-sm mx-auto px-3 py-2 flex items-center justify-between"},
               e("div",{className:"font-semibold"},"Vision + 4 Areas"),
               e("div",{className:"flex items-center gap-1"},
-                e("button",{onClick:onExport, className:"px-2 py-1 text-xs rounded-xl bg-white shadow flex items-center gap-1"},
-                  e("span",{className:"icon"},"📤"), " 내보내기"),
-                e("button",{onClick:()=>fileRef.current && fileRef.current.click(), className:"px-2 py-1 text-xs rounded-xl bg-white shadow flex items-center gap-1"},
-                  e("span",{className:"icon"},"📥"), " 가져오기"),
+                e("button",{onClick:onExport, className:"px-2 py-1 text-xs rounded-xl bg-white shadow flex items-center gap-1"},"📤 내보내기"),
+                e("button",{onClick:()=>fileRef.current && fileRef.current.click(), className:"px-2 py-1 text-xs rounded-xl bg-white shadow flex items-center gap-1"},"📥 가져오기"),
                 e("input",{ref:fileRef, type:"file", accept:"application/json", onChange:onImport, className:"hidden"})
               )
             )
@@ -160,36 +370,41 @@
 
         function TabButton({ active, onClick, icon, label }){
           return e("button",{onClick:onClick, className:`flex-1 py-2 text-xs flex flex-col items-center ${active ? "text-black":"text-neutral-500"}`},
-            e("span",{className:"icon"},icon), e("span",{className:"mt-1"},label));
+            e("span",null,icon), e("span",{className:"mt-1"},label));
         }
 
         function VisionBoard({ vision, setVision }){
           const fileRef = useRef(null);
-          function onPick(ev){
+          async function onPick(ev){
             const file = ev.target.files && ev.target.files[0];
             if(!file) return;
-            const reader = new FileReader();
-            reader.onload = () => setVision(v=>({...v, imageDataUrl:String(reader.result||"")}));
-            reader.readAsDataURL(file);
+            try{
+              const dataUrl = await compressImageFile(file);
+              setVision(v=>({...v, imageDataUrl: dataUrl}));
+              showToast("이미지를 추가했어요 (압축 저장)");
+            }catch(e){
+              showToast("이미지를 처리하지 못했어요");
+            }
           }
           return e("div",{className:"rounded-2xl overflow-hidden shadow bg-white"},
             e("div",{className:"relative"},
               (vision.imageDataUrl || vision.imageUrl) ?
                 e("img",{src:vision.imageDataUrl || vision.imageUrl, alt:"Vision", className:"w-full h-56 object-cover"}) :
                 e("div",{className:"w-full h-56 flex flex-col items-center justify-center text-neutral-400"},
-                  e("div",{className:"icon", style:{fontSize:"40px"}}, "🖼️"),
+                  e("div",{style:{fontSize:"40px"}}, "🖼️"),
                   "비전보드 이미지를 추가하세요"
                 ),
               e("div",{className:"absolute top-2 right-2 flex gap-2"},
                 e("button",{onClick:()=>fileRef.current && fileRef.current.click(), className:"px-2 py-1 bg-black/80 text-white rounded-xl text-xs"},"사진 업로드"),
-                e("input",{ref:fileRef, type:"file", accept:"image/*", onChange:onPick, className:"hidden"})
+                e("input",{ref:fileRef, type:"file", accept:"image/*", capture:"environment", onChange:onPick, className:"hidden"})
               )
             ),
             e("div",{className:"p-3 border-t"},
               e("input",{
                 value: vision.imageUrl || "", onChange:(ev)=>setVision(v=>({...v, imageUrl:ev.target.value})),
                 placeholder:"이미지 URL 붙여넣기 (선택)", className:"w-full text-xs p-2 rounded-xl bg-neutral-50 focus:outline-none"
-              })
+              }),
+              e("div",{className:"text-[10px] text-neutral-500 mt-1"},"업로드 시 이미지가 자동으로 용량 축소되어 저장됩니다.")
             )
           );
         }
@@ -208,9 +423,9 @@
                 e("span",{className:"text-xs text-neutral-600"}, `${done}/${total}`)
               ),
               e("div",{className:"flex items-center gap-2"},
-                editing ? e("button",{onClick:()=>{onRename(name||"무제"); setEditing(false);}, className:"text-xs px-2 py-1 bg-white rounded-xl shadow flex items-center gap-1"}, "💾 저장") :
-                         e("button",{onClick:()=>setEditing(true), className:"text-xs px-2 py-1 bg-white rounded-xl shadow flex items-center gap-1"}, "✎ 이름"),
-                e("button",{onClick:onAddGoal, className:"text-xs px-2 py-1 bg-white rounded-xl shadow flex items-center gap-1"}, "＋ 목표")
+                editing ? e("button",{onClick:()=>{onRename(name||"무제"); setEditing(false);}, className:"text-xs px-2 py-1 bg-white rounded-xl shadow flex items-center gap-1"},"💾 저장") :
+                         e("button",{onClick:()=>setEditing(true), className:"text-xs px-2 py-1 bg-white rounded-xl shadow flex items-center gap-1"},"✎ 이름"),
+                e("button",{onClick:onAddGoal, className:"text-xs px-2 py-1 bg-white rounded-xl shadow flex items-center gap-1"},"＋ 목표")
               )
             ),
             e("div",{className:"mt-2 grid gap-2"},
@@ -310,11 +525,12 @@
             e("div",{className:"grid gap-2"},
               db.weeks.map((w,i)=> e("button",{key:w.id, onClick:()=>{ setActiveWeekId(w.id); setPage("dashboard"); }, className:"w-full text-left bg-white rounded-2xl shadow p-3"},
                 e("div",{className:"flex items-center justify-between"},
-                  e("div",{className:"font-medium"}, formatWeek(new Date(w.weekStartISO))),
+                  e("div",{className:"font-medium"}, (new Date(w.weekStartISO)).toLocaleDateString(undefined,{month:'short', day:'numeric'}) + " – " + (new Date(new Date(w.weekStartISO).getTime()+6*86400000)).toLocaleDateString(undefined,{month:'short', day:'numeric'})),
                   e("div",{className:"text-xs text-neutral-500"}, i===db.weeks.length-1 ? "최근" : `${db.weeks.length-1-i}주 전`)
                 ),
                 e("div",{className:"mt-2 grid grid-cols-2 gap-2"},
-                  w.areas.map((a)=>{ const { total, done } = countProgress(a); const pct = total ? Math.round((done/total)*100) : 0;
+                  w.areas.map((a)=>{ let total=0,done=0; for(const g of a.goals){ total++; if(g.completed) done++; for(const ac of (g.actions||[])){ total++; if(ac.completed) done++; for(const s of (ac.subtasks||[])){ total++; if(s.completed) done++; }}}
+                    const pct = total ? Math.round((done/total)*100) : 0;
                     return e("div",{key:a.id, className:"text-xs flex items-center justify-between bg-neutral-50 rounded-xl px-2 py-1"},
                       e("span",{className:"truncate"}, a.name),
                       e("span",{className:"tabular-nums"}, `${done}/${total} (${pct}%)`)
@@ -340,7 +556,5 @@
         });
       }
     </script>
-
-    <div style="display:none"><!-- .nojekyll placeholder --></div>
   </body>
 </html>
