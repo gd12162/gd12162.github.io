@@ -13,332 +13,327 @@
     <style>
       html, body, #root { height: 100%; }
       body { background: #fafafa; }
+      .btn { padding: 4px 8px; border-radius: 10px; background: #f3f4f6; }
+      .btn-red { background: #fef2f2; color: #b91c1c; }
+      .icon { font-style: normal; }
+      .tip { font-size: 12px; color: #6b7280; }
+      .bar { position: sticky; top: 0; z-index: 50; backdrop-filter: blur(6px); background: rgba(250,250,250,0.8); border-bottom: 1px solid #e5e7eb; }
+      .nav { position: fixed; bottom: 0; inset-inline: 0; z-index: 50; background: white; border-top: 1px solid #e5e7eb; box-shadow: 0 -1px 3px rgba(0,0,0,0.03); }
     </style>
   </head>
   <body>
     <div id="root"></div>
 
-    <script type="module">
-      import React, { useEffect, useRef, useState } from "https://esm.sh/react@18.2.0";
-      import { createRoot } from "https://esm.sh/react-dom@18.2.0/client";
-      import { motion, AnimatePresence } from "https://esm.sh/framer-motion@10.18.0";
-      import * as Lucide from "https://esm.sh/lucide-react@0.428.0";
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
 
-      const { Plus, History, ChevronRight, ChevronLeft, Trash2, Edit, Save, Image: ImageIcon, RefreshCcw, Upload, Download, Layers, CalendarClock, Info, X } = Lucide;
+    <script>
+      (function(){
+        const { useState, useEffect, useRef } = React;
+        const e = React.createElement;
 
-      const STORAGE_KEY = "vb_weekly_tracker_v1";
-      function uid(){ return Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4); }
-      const DEFAULT_AREAS = [
-        { id: uid(), name: "돈/일 (Wealth/Work)", color: "bg-emerald-50", goals: [] },
-        { id: uid(), name: "신앙 (Faith)", color: "bg-indigo-50", goals: [] },
-        { id: uid(), name: "가족 (Family)", color: "bg-rose-50", goals: [] },
-        { id: uid(), name: "나 (Self)", color: "bg-amber-50", goals: [] },
-      ];
-      function startOfWeek(date = new Date()) { const d = new Date(date); const day = (d.getDay()+6)%7; d.setDate(d.getDate()-day); d.setHours(0,0,0,0); return d; }
-      function formatWeek(d){ const end = new Date(d); end.setDate(end.getDate()+6); const f = x => x.toLocaleDateString(undefined,{month:"short", day:"numeric"}); return `${f(d)} – ${f(end)}`; }
-      function deepClone(x){ return JSON.parse(JSON.stringify(x)); }
-      function resetCompletion(node){ if(node.completed) node.completed=false; if(Array.isArray(node.subtasks)) node.subtasks.forEach(resetCompletion); if(Array.isArray(node.actions)) node.actions.forEach(resetCompletion); if(Array.isArray(node.goals)) node.goals.forEach(resetCompletion); return node; }
-      function countProgress(area){ let total=0,done=0; for(const g of area.goals){ total++; if(g.completed) done++; for(const a of g.actions||[]){ total++; if(a.completed) done++; for(const s of a.subtasks||[]){ total++; if(s.completed) done++; }}} return {total,done}; }
-      function isiOS(){ return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); }
+        const STORAGE_KEY = "vb_weekly_tracker_v1";
+        function uid(){ return Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4); }
+        const DEFAULT_AREAS = [
+          { id: uid(), name: "돈/일 (Wealth/Work)", color: "bg-emerald-50", goals: [] },
+          { id: uid(), name: "신앙 (Faith)", color: "bg-indigo-50", goals: [] },
+          { id: uid(), name: "가족 (Family)", color: "bg-rose-50", goals: [] },
+          { id: uid(), name: "나 (Self)", color: "bg-amber-50", goals: [] },
+        ];
+        function startOfWeek(date = new Date()) { const d = new Date(date); const day = (d.getDay()+6)%7; d.setDate(d.getDate()-day); d.setHours(0,0,0,0); return d; }
+        function formatWeek(d){ const end = new Date(d); end.setDate(end.getDate()+6); const f = x => x.toLocaleDateString(undefined,{month:"short", day:"numeric"}); return `${f(d)} – ${f(end)}`; }
+        function deepClone(x){ return JSON.parse(JSON.stringify(x)); }
+        function resetCompletion(node){ if(node.completed) node.completed=false; if(Array.isArray(node.subtasks)) node.subtasks.forEach(resetCompletion); if(Array.isArray(node.actions)) node.actions.forEach(resetCompletion); if(Array.isArray(node.goals)) node.goals.forEach(resetCompletion); return node; }
+        function countProgress(area){ let total=0,done=0; for(const g of area.goals){ total++; if(g.completed) done++; for(const a of g.actions||[]){ total++; if(a.completed) done++; for(const s of a.subtasks||[]){ total++; if(s.completed) done++; }}} return {total,done}; }
+        function isiOS(){ return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); }
 
-      function useLocalStorage(key, initialValue){
-        const [value, setValue] = useState(() => {
-          try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : initialValue; }
-          catch { return initialValue; }
-        });
-        useEffect(() => { localStorage.setItem(key, JSON.stringify(value)); }, [key, value]);
-        return [value, setValue];
-      }
+        function useLocalStorage(key, initialValue){
+          const [value, setValue] = useState(() => {
+            try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : initialValue; }
+            catch { return initialValue; }
+          });
+          useEffect(() => { localStorage.setItem(key, JSON.stringify(value)); }, [key, value]);
+          return [value, setValue];
+        }
 
-      function createInitialDB(){
-        const week0 = startOfWeek(new Date());
-        const areas = deepClone(DEFAULT_AREAS);
-        areas[0].goals = [{ id: uid(), title: "매출 파이프라인 점검", completed: false, actions:[{ id: uid(), title: "잠재고객 10건 콜드리치", completed:false, subtasks:[{id:uid(), title:"리스트 업데이트", completed:false}, {id:uid(), title:"스크립트 다듬기", completed:false}]}]}];
-        areas[1].goals = [{ id: uid(), title: "매일 10분 묵상", completed: false, actions: [] }];
-        areas[2].goals = [{ id: uid(), title: "가족 저녁 2회", completed: false, actions: [{ id: uid(), title: "수요일 일정 비우기", completed:false, subtasks: [] }]}];
-        areas[3].goals = [{ id: uid(), title: "주 3회 운동", completed: false, actions: [{ id: uid(), title: "월/수/금 오전 7시", completed:false, subtasks: [] }]}];
-        const db = { vision: { imageDataUrl: "", imageUrl: "" }, weeks: [{ id: uid(), weekStartISO: week0.toISOString(), areas, notes: "" }], activeWeekId: null };
-        db.activeWeekId = db.weeks[0].id; return db;
-      }
+        function createInitialDB(){
+          const week0 = startOfWeek(new Date());
+          const areas = deepClone(DEFAULT_AREAS);
+          areas[0].goals = [{ id: uid(), title: "매출 파이프라인 점검", completed: false, actions:[{ id: uid(), title: "잠재고객 10건 콜드리치", completed:false, subtasks:[{id:uid(), title:"리스트 업데이트", completed:false}, {id:uid(), title:"스크립트 다듬기", completed:false}]}]}];
+          areas[1].goals = [{ id: uid(), title: "매일 10분 묵상", completed: false, actions: [] }];
+          areas[2].goals = [{ id: uid(), title: "가족 저녁 2회", completed: false, actions: [{ id: uid(), title: "수요일 일정 비우기", completed:false, subtasks: [] }]}];
+          areas[3].goals = [{ id: uid(), title: "주 3회 운동", completed: false, actions: [{ id: uid(), title: "월/수/금 오전 7시", completed:false, subtasks: [] }]}];
+          const db = { vision: { imageDataUrl: "", imageUrl: "" }, weeks: [{ id: uid(), weekStartISO: week0.toISOString(), areas, notes: "" }], activeWeekId: null };
+          db.activeWeekId = db.weeks[0].id; return db;
+        }
 
-      function App(){
-        const [db, setDb] = useLocalStorage(STORAGE_KEY, createInitialDB());
-        const [page, setPage] = useState("dashboard");
-        const [vision, setVision] = useState(db.vision || { imageDataUrl: "", imageUrl: "" });
-        const [activeWeekId, setActiveWeekId] = useState(db.activeWeekId);
-        const [showInstallTip, setShowInstallTip] = useState(true);
-        const activeWeek = db.weeks.find((w) => w.id === activeWeekId) || db.weeks[0];
+        function App(){
+          const [db, setDb] = useLocalStorage(STORAGE_KEY, createInitialDB());
+          const [page, setPage] = useState("dashboard");
+          const [vision, setVision] = useState(db.vision || { imageDataUrl: "", imageUrl: "" });
+          const [activeWeekId, setActiveWeekId] = useState(db.activeWeekId);
+          const activeWeek = db.weeks.find((w) => w.id === activeWeekId) || db.weeks[0];
 
-        useEffect(()=>{ setDb(prev=>({ ...prev, vision })); }, [vision.imageDataUrl, vision.imageUrl]);
-        useEffect(()=>{ setDb(prev=>({ ...prev, activeWeekId })); }, [activeWeekId]);
+          useEffect(()=>{ setDb(prev=>({ ...prev, vision })); }, [vision.imageDataUrl, vision.imageUrl]);
+          useEffect(()=>{ setDb(prev=>({ ...prev, activeWeekId })); }, [activeWeekId]);
 
-        // Register SW for root path
-        useEffect(()=>{ if('serviceWorker' in navigator){ navigator.serviceWorker.register('/sw.js').catch(()=>{}); } },[]);
+          useEffect(()=>{ if('serviceWorker' in navigator){ navigator.serviceWorker.register('/sw.js').catch(()=>{}); } },[]);
 
-        const weekIndex = db.weeks.findIndex((w)=>w.id===activeWeek?.id);
-        function gotoPrevWeek(){ if(weekIndex>0) setActiveWeekId(db.weeks[weekIndex-1].id); }
-        function gotoNextWeek(){ if(weekIndex<db.weeks.length-1) setActiveWeekId(db.weeks[weekIndex+1].id); }
-        function startNewWeek(){ const last=db.weeks[db.weeks.length-1]; const base=deepClone(last); base.id=uid(); const nextStart=new Date(last.weekStartISO); nextStart.setDate(nextStart.getDate()+7); base.weekStartISO=nextStart.toISOString(); base.areas=base.areas.map(a=>resetCompletion(a)); base.notes=""; setDb(prev=>({...prev, weeks:[...prev.weeks, base], activeWeekId: base.id })); }
-        function replaceWeek(updated){ setDb(prev=>({ ...prev, weeks: prev.weeks.map((w)=>w.id===updated.id?updated:w) })); }
-        function setAreaName(areaId, name){ const w=deepClone(activeWeek); const area=w.areas.find(a=>a.id===areaId); if(area) area.name=name; replaceWeek(w); }
-        function addGoal(areaId){ const w=deepClone(activeWeek); const area=w.areas.find(a=>a.id===areaId); if(!area) return; area.goals.push({ id: uid(), title: "새 목표", completed:false, actions: []}); replaceWeek(w); }
-        function toggleCompleted(kind, ids){ const w=deepClone(activeWeek); for(const area of w.areas){ if(kind==="goal"){ const g=area.goals.find(g=>g.id===ids.goalId); if(g) g.completed=!g.completed; } else if(kind==="action"){ for(const g of area.goals){ const a=g.actions.find(a=>a.id===ids.actionId); if(a) a.completed=!a.completed; } } else if(kind==="subtask"){ for(const g of area.goals){ for(const a of g.actions){ const s=a.subtasks?.find(s=>s.id===ids.subtaskId); if(s) s.completed=!s.completed; }}} } replaceWeek(w); }
-        function setTitle(kind, ids, title){ const w=deepClone(activeWeek); for(const area of w.areas){ for(const g of area.goals){ if(kind==="goal" && g.id===ids.goalId) g.title=title; for(const a of g.actions){ if(kind==="action" && a.id===ids.actionId) a.title=title; for(const s of a.subtasks||[]){ if(kind==="subtask" && s.id===ids.subtaskId) s.title=title; }}}} replaceWeek(w); }
-        function addAction(goalId){ const w=deepClone(activeWeek); for(const area of w.areas){ for(const g of area.goals){ if(g.id===goalId){ g.actions.push({ id: uid(), title: "새 행동", completed:false, subtasks: []}); }}} replaceWeek(w); }
-        function addSubtask(actionId){ const w=deepClone(activeWeek); for(const area of w.areas){ for(const g of area.goals){ for(const a of g.actions){ if(a.id===actionId){ a.subtasks=a.subtasks||[]; a.subtasks.push({ id: uid(), title: "세부 작업", completed:false}); }}}} replaceWeek(w); }
-        function removeItem(kind, ids){ const w=deepClone(activeWeek); for(const area of w.areas){ if(kind==="goal"){ area.goals = area.goals.filter(g=>g.id!==ids.goalId); } else { for(const g of area.goals){ if(kind==="action") g.actions = g.actions.filter(a=>a.id!==ids.actionId); if(kind==="subtask") for(const a of g.actions) a.subtasks=(a.subtasks||[]).filter(s=>s.id!==ids.subtaskId); }}} replaceWeek(w); }
-        function moveItem(kind, ids, dir){ const w=deepClone(activeWeek); function move(arr, idKey, id){ const idx=arr.findIndex(x=>x[idKey]===id); if(idx<0) return; const ni=idx+dir; if(ni<0||ni>=arr.length) return; const t=arr[idx]; arr[idx]=arr[ni]; arr[ni]=t; } for(const area of w.areas){ if(kind==="goal") move(area.goals, "id", ids.goalId); for(const g of area.goals){ if(kind==="action") move(g.actions, "id", ids.actionId); for(const a of g.actions){ if(kind==="subtask") move(a.subtasks||[], "id", ids.subtaskId); }}} replaceWeek(w); }
-        function exportJson(){ const blob = new Blob([JSON.stringify(db,null,2)], {type:"application/json"}); const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download=`vb_tracker_${new Date().toISOString().slice(0,10)}.json`; a.click(); URL.revokeObjectURL(url); }
-        function onImportJson(e){ const file=e.target.files?.[0]; if(!file) return; const reader=new FileReader(); reader.onload=()=>{ try{ const parsed=JSON.parse(reader.result); setDb(parsed); setVision(parsed.vision||{imageDataUrl:"", imageUrl:""}); setActiveWeekId(parsed.activeWeekId || parsed.weeks?.[parsed.weeks.length-1]?.id);}catch{ alert("JSON 파일을 읽을 수 없어요."); } }; reader.readAsText(file); }
+          const weekIndex = db.weeks.findIndex((w)=>w.id===activeWeek?.id);
+          function gotoPrevWeek(){ if(weekIndex>0) setActiveWeekId(db.weeks[weekIndex-1].id); }
+          function gotoNextWeek(){ if(weekIndex<db.weeks.length-1) setActiveWeekId(db.weeks[weekIndex+1].id); }
+          function startNewWeek(){ const last=db.weeks[db.weeks.length-1]; const base=deepClone(last); base.id=uid(); const nextStart=new Date(last.weekStartISO); nextStart.setDate(nextStart.getDate()+7); base.weekStartISO=nextStart.toISOString(); base.areas=base.areas.map(a=>resetCompletion(a)); base.notes=""; setDb(prev=>({...prev, weeks:[...prev.weeks, base], activeWeekId: base.id })); }
+          function replaceWeek(updated){ setDb(prev=>({ ...prev, weeks: prev.weeks.map((w)=>w.id===updated.id?updated:w) })); }
+          function setAreaName(areaId, name){ const w=deepClone(activeWeek); const area=w.areas.find(a=>a.id===areaId); if(area) area.name=name; replaceWeek(w); }
+          function addGoal(areaId){ const w=deepClone(activeWeek); const area=w.areas.find(a=>a.id===areaId); if(!area) return; area.goals.push({ id: uid(), title: "새 목표", completed:false, actions: []}); replaceWeek(w); }
+          function toggleCompleted(kind, ids){ const w=deepClone(activeWeek); for(const area of w.areas){ if(kind==="goal"){ const g=area.goals.find(g=>g.id===ids.goalId); if(g) g.completed=!g.completed; } else if(kind==="action"){ for(const g of area.goals){ const a=g.actions.find(a=>a.id===ids.actionId); if(a) a.completed=!a.completed; } } else if(kind==="subtask"){ for(const g of area.goals){ for(const a of g.actions){ const s=a.subtasks?.find(s=>s.id===ids.subtaskId); if(s) s.completed=!s.completed; }}} } replaceWeek(w); }
+          function setTitle(kind, ids, title){ const w=deepClone(activeWeek); for(const area of w.areas){ for(const g of area.goals){ if(kind==="goal" && g.id===ids.goalId) g.title=title; for(const a of g.actions){ if(kind==="action" && a.id===ids.actionId) a.title=title; for(const s of a.subtasks||[]){ if(kind==="subtask" && s.id===ids.subtaskId) s.title=title; }}}} replaceWeek(w); }
+          function addAction(goalId){ const w=deepClone(activeWeek); for(const area of w.areas){ for(const g of area.goals){ if(g.id===goalId){ g.actions.push({ id: uid(), title: "새 행동", completed:false, subtasks: []}); }}} replaceWeek(w); }
+          function addSubtask(actionId){ const w=deepClone(activeWeek); for(const area of w.areas){ for(const g of area.goals){ for(const a of g.actions){ if(a.id===actionId){ a.subtasks=a.subtasks||[]; a.subtasks.push({ id: uid(), title: "세부 작업", completed:false}); }}}} replaceWeek(w); }
+          function removeItem(kind, ids){ const w=deepClone(activeWeek); for(const area of w.areas){ if(kind==="goal"){ area.goals = area.goals.filter(g=>g.id!==ids.goalId); } else { for(const g of area.goals){ if(kind==="action") g.actions = g.actions.filter(a=>a.id!==ids.actionId); if(kind==="subtask") for(const a of g.actions) a.subtasks=(a.subtasks||[]).filter(s=>s.id!==ids.subtaskId); }}} replaceWeek(w); }
+          function moveItem(kind, ids, dir){ const w=deepClone(activeWeek); function move(arr, idKey, id){ const idx=arr.findIndex(x=>x[idKey]===id); if(idx<0) return; const ni=idx+dir; if(ni<0||ni>=arr.length) return; const t=arr[idx]; arr[idx]=arr[ni]; arr[ni]=t; } for(const area of w.areas){ if(kind==="goal") move(area.goals, "id", ids.goalId); for(const g of area.goals){ if(kind==="action") move(g.actions, "id", ids.actionId); for(const a of g.actions){ if(kind==="subtask") move(a.subtasks||[], "id", ids.subtaskId); }}} replaceWeek(w); }
+          function exportJson(){ const blob = new Blob([JSON.stringify(db,null,2)], {type:"application/json"}); const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download=`vb_tracker_${new Date().toISOString().slice(0,10)}.json`; a.click(); URL.revokeObjectURL(url); }
+          function onImportJson(e){ const file=e.target.files?.[0]; if(!file) return; const reader=new FileReader(); reader.onload=()=>{ try{ const parsed=JSON.parse(reader.result); setDb(parsed); setVision(parsed.vision||{imageDataUrl:"", imageUrl:""}); setActiveWeekId(parsed.activeWeekId || parsed.weeks?.[parsed.weeks.length-1]?.id);}catch{ alert("JSON 파일을 읽을 수 없어요."); } }; reader.readAsText(file); }
 
-        return (
-          React.createElement("div", {className:"min-h-screen bg-neutral-50 text-neutral-900"},
-            React.createElement(TopBar, {page, setPage, onExport:exportJson, onImport:onImportJson}),
-            isiOS() && React.createElement("div",{className:"max-w-screen-sm mx-auto px-3 mt-2"},
-              React.createElement("div",{className:"rounded-2xl bg-white shadow p-3 text-xs text-neutral-700 flex items-start gap-2"},
-                React.createElement(Info,{className:"w-4 h-4 mt-0.5"}),
-                React.createElement("div",{className:"flex-1"}, "더 편하게 쓰려면 ", React.createElement("b",null,"Safari → 공유 → 홈 화면에 추가"), " 로 설치하세요. 설치하면 전체화면 + 오프라인 사용이 가능합니다.")
-              )
-            ),
-            page==="dashboard" && React.createElement("main",{className:"p-3 pb-24 max-w-screen-sm mx-auto"},
-              React.createElement(VisionBoard,{vision, setVision}),
-              React.createElement("div",{className:"mt-4 flex items-center justify-between"},
-                React.createElement("button",{onClick:gotoPrevWeek, className:"px-2 py-1 rounded-xl bg-white shadow flex items-center gap-1"},
-                  React.createElement(ChevronLeft,{className:"w-4 h-4"})," 이전"),
-                React.createElement("div",{className:"text-sm font-semibold text-neutral-600"}, formatWeek(new Date(activeWeek.weekStartISO))),
-                React.createElement("button",{onClick:gotoNextWeek, className:"px-2 py-1 rounded-xl bg-white shadow flex items-center gap-1"}, "다음 ", React.createElement(ChevronRight,{className:"w-4 h-4"}))
+          return e("div",{className:"min-h-screen bg-neutral-50 text-neutral-900"},
+            e(TopBar,{page, setPage, onExport:exportJson, onImport:onImportJson}),
+            e("div",{className:"max-w-screen-sm mx-auto px-3 mt-2 tip"},"Safari → 공유 → 홈 화면에 추가 (PWA 설치)"),
+            page==="dashboard" && e("main",{className:"p-3 pb-24 max-w-screen-sm mx-auto"},
+              e(VisionBoard,{vision, setVision}),
+              e("div",{className:"mt-4 flex items-center justify-between"},
+                e("button",{onClick:gotoPrevWeek, className:"px-2 py-1 rounded-xl bg-white shadow flex items-center gap-1"},
+                  e("span",{className:"icon"},"◀︎"), " 이전"),
+                e("div",{className:"text-sm font-semibold text-neutral-600"}, formatWeek(new Date(activeWeek.weekStartISO))),
+                e("button",{onClick:gotoNextWeek, className:"px-2 py-1 rounded-xl bg-white shadow flex items-center gap-1"}, "다음 ", e("span",{className:"icon"},"▶︎"))
               ),
-              React.createElement("div",{className:"mt-2 flex items-center justify-between"},
-                React.createElement("div",{className:"text-xs text-neutral-500 flex items-center gap-2"},
-                  React.createElement(CalendarClock,{className:"w-4 h-4"}),"현재 주간 계획"),
-                React.createElement("button",{onClick:startNewWeek, className:"px-3 py-1 rounded-xl bg-black text-white text-xs flex items-center gap-2 shadow"},
-                  React.createElement(RefreshCcw,{className:"w-4 h-4"})," 새 주 시작")
+              e("div",{className:"mt-2 flex items-center justify-between"},
+                e("div",{className:"text-xs text-neutral-500 flex items-center gap-2"},
+                  e("span",{className:"icon"},"📅"), "현재 주간 계획"),
+                e("button",{onClick:startNewWeek, className:"px-3 py-1 rounded-xl bg-black text-white text-xs flex items-center gap-2 shadow"},
+                  e("span",{className:"icon"},"⟳"), " 새 주 시작")
               ),
-              React.createElement("div",{className:"mt-4 grid grid-cols-1 gap-3"},
+              e("div",{className:"mt-4 grid grid-cols-1 gap-3"},
                 activeWeek.areas.map((area)=>
-                  React.createElement(AreaCard,{
+                  e(AreaCard,{
                     key:area.id, area, onRename:(name)=>setAreaName(area.id,name), onAddGoal:()=>addGoal(area.id),
                     onChange:replaceWeek, week:activeWeek, onToggle:toggleCompleted, onSetTitle:setTitle,
                     onAddAction:addAction, onAddSubtask:addSubtask, onRemove:removeItem, onMove:moveItem
                   })
                 )
               ),
-              React.createElement("div",{className:"mt-4"},
-                React.createElement("textarea",{
-                  value: activeWeek.notes||"", onChange:(e)=>replaceWeek({...activeWeek, notes:e.target.value}),
+              e("div",{className:"mt-4"},
+                e("textarea",{
+                  value: activeWeek.notes||"", onChange:(ev)=>replaceWeek({...activeWeek, notes:ev.target.value}),
                   placeholder:"이번 주 메모", className:"w-full min-h-[80px] rounded-2xl p-3 text-sm bg-white shadow focus:outline-none"
                 })
               )
             ),
-            page==="history" && React.createElement(HistoryPage,{db, setActiveWeekId, setPage}),
-            React.createElement(BottomNav,{page, setPage})
-          )
-        );
-      }
-
-      function TopBar({ page, setPage, onExport, onImport }){
-        const fileRef = React.useRef(null);
-        return React.createElement("div",{className:"sticky top-0 z-50 backdrop-blur bg-neutral-50/70 border-b"},
-          React.createElement("div",{className:"max-w-screen-sm mx-auto px-3 py-2 flex items-center justify-between"},
-            React.createElement("div",{className:"font-semibold"},"Vision + 4 Areas"),
-            React.createElement("div",{className:"flex items-center gap-1"},
-              React.createElement("button",{onClick:onExport, className:"px-2 py-1 text-xs rounded-xl bg-white shadow flex items-center gap-1"},
-                React.createElement(Download,{className:"w-4 h-4"})," 내보내기"),
-              React.createElement("button",{onClick:()=>fileRef.current?.click(), className:"px-2 py-1 text-xs rounded-xl bg-white shadow flex items-center gap-1"},
-                React.createElement(Upload,{className:"w-4 h-4"})," 가져오기"),
-              React.createElement("input",{ref:fileRef, type:"file", accept:"application/json", onChange:onImport, className:"hidden"})
-            )
-          )
-        );
-      }
-
-      function BottomNav({ page, setPage }){
-        return React.createElement("nav",{className:"fixed bottom-0 inset-x-0 z-50 bg-white border-t shadow-sm"},
-          React.createElement("div",{className:"max-w-screen-sm mx-auto flex"},
-            React.createElement(TabButton,{active:page==="dashboard", onClick:()=>setPage("dashboard"), icon:React.createElement(Layers,{className:"w-5 h-5"}), label:"대시보드"}),
-            React.createElement(TabButton,{active:page==="history", onClick:()=>setPage("history"), icon:React.createElement(History,{className:"w-5 h-5"}), label:"히스토리"})
-          )
-        );
-      }
-
-      function TabButton({ active, onClick, icon, label }){
-        return React.createElement("button",{onClick:onClick, className:`flex-1 py-2 text-xs flex flex-col items-center ${active ? "text-black":"text-neutral-500"}`},
-          icon, React.createElement("span",{className:"mt-1"},label));
-      }
-
-      function VisionBoard({ vision, setVision }){
-        const fileRef = React.useRef(null);
-        function onPick(e){
-          const file = e.target.files?.[0];
-          if(!file) return;
-          const reader = new FileReader();
-          reader.onload = () => setVision(v=>({...v, imageDataUrl:String(reader.result||"")}));
-          reader.readAsDataURL(file);
+            page==="history" && e(HistoryPage,{db, setActiveWeekId, setPage}),
+            e(BottomNav,{page, setPage})
+          );
         }
-        return React.createElement("div",{className:"rounded-2xl overflow-hidden shadow bg-white"},
-          React.createElement("div",{className:"relative"},
-            (vision.imageDataUrl || vision.imageUrl) ?
-              React.createElement("img",{src:vision.imageDataUrl || vision.imageUrl, alt:"Vision", className:"w-full h-56 object-cover"}) :
-              React.createElement("div",{className:"w-full h-56 flex flex-col items-center justify-center text-neutral-400"},
-                React.createElement(ImageIcon,{className:"w-10 h-10 mb-2"}),"비전보드 이미지를 추가하세요"
-              ),
-            React.createElement("div",{className:"absolute top-2 right-2 flex gap-2"},
-              React.createElement("button",{onClick:()=>fileRef.current?.click(), className:"px-2 py-1 bg-black/80 text-white rounded-xl text-xs"},"사진 업로드"),
-              React.createElement("input",{ref:fileRef, type:"file", accept:"image/*", onChange:onPick, className:"hidden"})
-            )
-          ),
-          React.createElement("div",{className:"p-3 border-t"},
-            React.createElement("input",{
-              value: vision.imageUrl || "", onChange:(e)=>setVision(v=>({...v, imageUrl:e.target.value})),
-              placeholder:"이미지 URL 붙여넣기 (선택)", className:"w-full text-xs p-2 rounded-xl bg-neutral-50 focus:outline-none"
-            })
-          )
-        );
-      }
 
-      function AreaCard({ area, onRename, onAddGoal, week, onToggle, onSetTitle, onAddAction, onAddSubtask, onRemove, onMove }){
-        const { total, done } = countProgress(area);
-        const [editing, setEditing] = useState(false);
-        const [name, setName] = useState(area.name);
-        useEffect(()=>setName(area.name),[area.name]);
-        return React.createElement("div",{className:`rounded-2xl shadow p-3 ${area.color || "bg-white"}`},
-          React.createElement("div",{className:"flex items-center justify-between"},
-            React.createElement("div",{className:"flex items-center gap-2"},
-              React.createElement("div",{className:"font-semibold"},
-                editing ? React.createElement("input",{value:name, onChange:(e)=>setName(e.target.value), onBlur:()=>{onRename(name||"무제"); setEditing(false);}, className:"px-2 py-1 rounded-lg text-sm bg-white/70 focus:outline-none"}) : React.createElement("span",null,area.name)
-              ),
-              React.createElement("span",{className:"text-xs text-neutral-600"}, `${done}/${total}`)
-            ),
-            React.createElement("div",{className:"flex items-center gap-2"},
-              editing ? React.createElement("button",{onClick:()=>{onRename(name||"무제"); setEditing(false);}, className:"text-xs px-2 py-1 bg-white rounded-xl shadow flex items-center gap-1"}, React.createElement(Save,{className:"w-4 h-4"}),"저장") : React.createElement("button",{onClick:()=>setEditing(true), className:"text-xs px-2 py-1 bg-white rounded-xl shadow flex items-center gap-1"}, React.createElement(Edit,{className:"w-4 h-4"}),"이름"),
-              React.createElement("button",{onClick:onAddGoal, className:"text-xs px-2 py-1 bg-white rounded-xl shadow flex items-center gap-1"}, React.createElement(Plus,{className:"w-4 h-4"}),"목표")
+        function TopBar({ page, setPage, onExport, onImport }){
+          const fileRef = useRef(null);
+          return e("div",{className:"bar"},
+            e("div",{className:"max-w-screen-sm mx-auto px-3 py-2 flex items-center justify-between"},
+              e("div",{className:"font-semibold"},"Vision + 4 Areas"),
+              e("div",{className:"flex items-center gap-1"},
+                e("button",{onClick:onExport, className:"px-2 py-1 text-xs rounded-xl bg-white shadow flex items-center gap-1"},
+                  e("span",{className:"icon"},"📤"), " 내보내기"),
+                e("button",{onClick:()=>fileRef.current && fileRef.current.click(), className:"px-2 py-1 text-xs rounded-xl bg-white shadow flex items-center gap-1"},
+                  e("span",{className:"icon"},"📥"), " 가져오기"),
+                e("input",{ref:fileRef, type:"file", accept:"application/json", onChange:onImport, className:"hidden"})
+              )
             )
-          ),
-          React.createElement("div",{className:"mt-2 grid gap-2"},
-            area.goals.map((g)=>
-              React.createElement(GoalCard,{
-                key:g.id, goal:g, onToggle:()=>onToggle("goal",{goalId:g.id}), onSetTitle:(t)=>onSetTitle("goal",{goalId:g.id}, t),
-                onAddAction:()=>onAddAction(g.id), onRemove:()=>onRemove("goal",{goalId:g.id}), onMoveUp:()=>onMove("goal",{goalId:g.id}, -1),
-                onMoveDown:()=>onMove("goal",{goalId:g.id}, 1), onToggleAction:(aid)=>onToggle("action",{actionId:aid}),
-                onTitleAction:(aid,t)=>onSetTitle("action",{actionId:aid}, t), onAddSubtask:(aid)=>onAddSubtask(aid),
-                onRemoveAction:(aid)=>onRemove("action",{actionId:aid}), onMoveAction:(aid,dir)=>onMove("action",{actionId:aid}, dir),
-                onToggleSubtask:(sid)=>onToggle("subtask",{subtaskId:sid}), onTitleSubtask:(sid,t)=>onSetTitle("subtask",{subtaskId:sid}, t),
-                onRemoveSubtask:(sid)=>onRemove("subtask",{subtaskId:sid}), onMoveSubtask:(sid,dir)=>onMove("subtask",{subtaskId:sid}, dir)
+          );
+        }
+
+        function BottomNav({ page, setPage }){
+          return e("nav",{className:"nav"},
+            e("div",{className:"max-w-screen-sm mx-auto flex"},
+              e(TabButton,{active:page==="dashboard", onClick:()=>setPage("dashboard"), icon:"📚", label:"대시보드"}),
+              e(TabButton,{active:page==="history", onClick:()=>setPage("history"), icon:"🕘", label:"히스토리"})
+            )
+          );
+        }
+
+        function TabButton({ active, onClick, icon, label }){
+          return e("button",{onClick:onClick, className:`flex-1 py-2 text-xs flex flex-col items-center ${active ? "text-black":"text-neutral-500"}`},
+            e("span",{className:"icon"},icon), e("span",{className:"mt-1"},label));
+        }
+
+        function VisionBoard({ vision, setVision }){
+          const fileRef = useRef(null);
+          function onPick(ev){
+            const file = ev.target.files && ev.target.files[0];
+            if(!file) return;
+            const reader = new FileReader();
+            reader.onload = () => setVision(v=>({...v, imageDataUrl:String(reader.result||"")}));
+            reader.readAsDataURL(file);
+          }
+          return e("div",{className:"rounded-2xl overflow-hidden shadow bg-white"},
+            e("div",{className:"relative"},
+              (vision.imageDataUrl || vision.imageUrl) ?
+                e("img",{src:vision.imageDataUrl || vision.imageUrl, alt:"Vision", className:"w-full h-56 object-cover"}) :
+                e("div",{className:"w-full h-56 flex flex-col items-center justify-center text-neutral-400"},
+                  e("div",{className:"icon", style:{fontSize:"40px"}}, "🖼️"),
+                  "비전보드 이미지를 추가하세요"
+                ),
+              e("div",{className:"absolute top-2 right-2 flex gap-2"},
+                e("button",{onClick:()=>fileRef.current && fileRef.current.click(), className:"px-2 py-1 bg-black/80 text-white rounded-xl text-xs"},"사진 업로드"),
+                e("input",{ref:fileRef, type:"file", accept:"image/*", onChange:onPick, className:"hidden"})
+              )
+            ),
+            e("div",{className:"p-3 border-t"},
+              e("input",{
+                value: vision.imageUrl || "", onChange:(ev)=>setVision(v=>({...v, imageUrl:ev.target.value})),
+                placeholder:"이미지 URL 붙여넣기 (선택)", className:"w-full text-xs p-2 rounded-xl bg-neutral-50 focus:outline-none"
               })
             )
-          )
-        );
-      }
+          );
+        }
 
-      function GoalCard({ goal, onToggle, onSetTitle, onAddAction, onRemove, onMoveUp, onMoveDown,
-        onToggleAction, onTitleAction, onAddSubtask, onRemoveAction, onMoveAction,
-        onToggleSubtask, onTitleSubtask, onRemoveSubtask, onMoveSubtask }){
-        const [t, setT] = useState(goal.title);
-        useEffect(()=>setT(goal.title),[goal.title]);
-        return React.createElement("div",{className:"bg-white rounded-2xl shadow p-3"},
-          React.createElement("div",{className:"flex items-center justify-between"},
-            React.createElement("label",{className:"flex items-center gap-2"},
-              React.createElement("input",{type:"checkbox", checked:!!goal.completed, onChange:onToggle, className:"w-4 h-4"}),
-              React.createElement("input",{value:t, onChange:(e)=>setT(e.target.value), onBlur:()=>onSetTitle(t||"(제목 없음)"), className:"text-sm font-medium bg-transparent focus:outline-none"})
-            ),
-            React.createElement("div",{className:"flex items-center gap-1"},
-              React.createElement("button",{onClick:onMoveUp, className:"px-2 py-1 text-xs bg-neutral-100 rounded-lg"},"▲"),
-              React.createElement("button",{onClick:onMoveDown, className:"px-2 py-1 text-xs bg-neutral-100 rounded-lg"},"▼"),
-              React.createElement("button",{onClick:onAddAction, className:"px-2 py-1 text-xs bg-neutral-100 rounded-lg flex items-center gap-1"}, React.createElement(Plus,{className:"w-3 h-3"}),"행동"),
-              React.createElement("button",{onClick:onRemove, className:"px-2 py-1 text-xs bg-red-50 text-red-600 rounded-lg flex items-center gap-1"}, React.createElement(Trash2,{className:"w-3 h-3"}),"삭제")
-            )
-          ),
-          React.createElement("div",{className:"mt-2 grid gap-2"},
-            (goal.actions||[]).map((a)=>
-              React.createElement(ActionRow,{
-                key:a.id, action:a, onToggle:()=>onToggleAction(a.id), onSetTitle:(txt)=>onTitleAction(a.id, txt),
-                onAddSubtask:()=>onAddSubtask(a.id), onRemove:()=>onRemoveAction(a.id), onMoveUp:()=>onMoveAction(a.id, -1),
-                onMoveDown:()=>onMoveAction(a.id, 1), onToggleSubtask:(sid)=>onToggleSubtask(sid), onTitleSubtask:(sid,t)=>onTitleSubtask(sid,t),
-                onRemoveSubtask:(sid)=>onRemoveSubtask(sid), onMoveSubtask:(sid,dir)=>onMoveSubtask(sid, dir)
-              })
-            )
-          )
-        );
-      }
-
-      function ActionRow({ action, onToggle, onSetTitle, onAddSubtask, onRemove, onMoveUp, onMoveDown,
-        onToggleSubtask, onTitleSubtask, onRemoveSubtask, onMoveSubtask }){
-        const [t, setT] = useState(action.title);
-        useEffect(()=>setT(action.title),[action.title]);
-        return React.createElement("div",{className:"rounded-xl border p-2"},
-          React.createElement("div",{className:"flex items-center justify-between"},
-            React.createElement("label",{className:"flex items-center gap-2"},
-              React.createElement("input",{type:"checkbox", checked:!!action.completed, onChange:onToggle, className:"w-4 h-4"}),
-              React.createElement("input",{value:t, onChange:(e)=>setT(e.target.value), onBlur:()=>onSetTitle(t||"(무제)"), className:"text-sm bg-transparent focus:outline-none"})
-            ),
-            React.createElement("div",{className:"flex items-center gap-1"},
-              React.createElement("button",{onClick:onMoveUp, className:"px-2 py-1 text-xs bg-neutral-100 rounded-lg"},"▲"),
-              React.createElement("button",{onClick:onMoveDown, className:"px-2 py-1 text-xs bg-neutral-100 rounded-lg"},"▼"),
-              React.createElement("button",{onClick:onAddSubtask, className:"px-2 py-1 text-xs bg-neutral-100 rounded-lg"},"세부"),
-              React.createElement("button",{onClick:onRemove, className:"px-2 py-1 text-xs bg-red-50 text-red-600 rounded-lg flex items-center gap-1"}, React.createElement(Trash2,{className:"w-3 h-3"}),"삭제")
-            )
-          ),
-          React.createElement("div",{className:"mt-2 grid gap-1"},
-            (action.subtasks||[]).map((s)=>
-              React.createElement(SubtaskRow,{
-                key:s.id, subtask:s, onToggle:()=>onToggleSubtask(s.id), onSetTitle:(txt)=>onTitleSubtask(s.id, txt),
-                onRemove:()=>onRemoveSubtask(s.id), onMoveUp:()=>onMoveSubtask(s.id, -1), onMoveDown:()=>onMoveSubtask(s.id, 1)
-              })
-            )
-          )
-        );
-      }
-
-      function SubtaskRow({ subtask, onToggle, onSetTitle, onRemove, onMoveUp, onMoveDown }){
-        const [t, setT] = useState(subtask.title);
-        useEffect(()=>setT(subtask.title),[subtask.title]);
-        return React.createElement("div",{className:"flex items-center justify-between px-2 py-1 rounded-lg bg-neutral-50"},
-          React.createElement("label",{className:"flex items-center gap-2"},
-            React.createElement("input",{type:"checkbox", checked:!!subtask.completed, onChange:onToggle, className:"w-4 h-4"}),
-            React.createElement("input",{value:t, onChange:(e)=>setT(e.target.value), onBlur:()=>onSetTitle(t||"(세부)"), className:"text-sm bg-transparent focus:outline-none"})
-          ),
-          React.createElement("div",{className:"flex items-center gap-1"},
-            React.createElement("button",{onClick:onMoveUp, className:"px-2 py-1 text-xs bg-neutral-100 rounded-lg"},"▲"),
-            React.createElement("button",{onClick:onMoveDown, className:"px-2 py-1 text-xs bg-neutral-100 rounded-lg"},"▼"),
-            React.createElement("button",{onClick:onRemove, className:"px-2 py-1 text-xs bg-red-50 text-red-600 rounded-lg flex items-center gap-1"}, React.createElement(Trash2,{className:"w-3 h-3"}),"삭제")
-          )
-        );
-      }
-
-      function HistoryPage({ db, setActiveWeekId, setPage }){
-        return React.createElement("main",{className:"p-3 pb-24 max-w-screen-sm mx-auto"},
-          React.createElement("div",{className:"text-sm text-neutral-600 mb-2"},"지난 주차 기록을 간단히 확인하고 열람할 수 있어요."),
-          React.createElement("div",{className:"grid gap-2"},
-            db.weeks.map((w,i)=> React.createElement("button",{key:w.id, onClick:()=>{ setActiveWeekId(w.id); setPage("dashboard"); }, className:"w-full text-left bg-white rounded-2xl shadow p-3"},
-              React.createElement("div",{className:"flex items-center justify-between"},
-                React.createElement("div",{className:"font-medium"}, formatWeek(new Date(w.weekStartISO))),
-                React.createElement("div",{className:"text-xs text-neutral-500"}, i===db.weeks.length-1 ? "최근" : `${db.weeks.length-1-i}주 전`)
+        function AreaCard({ area, onRename, onAddGoal, week, onToggle, onSetTitle, onAddAction, onAddSubtask, onRemove, onMove }){
+          const { total, done } = countProgress(area);
+          const [editing, setEditing] = useState(false);
+          const [name, setName] = useState(area.name);
+          useEffect(()=>setName(area.name),[area.name]);
+          return e("div",{className:`rounded-2xl shadow p-3 ${area.color || "bg-white"}`},
+            e("div",{className:"flex items-center justify-between"},
+              e("div",{className:"flex items-center gap-2"},
+                e("div",{className:"font-semibold"},
+                  editing ? e("input",{value:name, onChange:(ev)=>setName(ev.target.value), onBlur:()=>{onRename(name||"무제"); setEditing(false);}, className:"px-2 py-1 rounded-lg text-sm bg-white/70 focus:outline-none"}) : e("span",null,area.name)
+                ),
+                e("span",{className:"text-xs text-neutral-600"}, `${done}/${total}`)
               ),
-              React.createElement("div",{className:"mt-2 grid grid-cols-2 gap-2"},
-                w.areas.map((a)=>{ const { total, done } = countProgress(a); const pct = total ? Math.round((done/total)*100) : 0;
-                  return React.createElement("div",{key:a.id, className:"text-xs flex items-center justify-between bg-neutral-50 rounded-xl px-2 py-1"},
-                    React.createElement("span",{className:"truncate"}, a.name),
-                    React.createElement("span",{className:"tabular-nums"}, `${done}/${total} (${pct}%)`)
-                  );
+              e("div",{className:"flex items-center gap-2"},
+                editing ? e("button",{onClick:()=>{onRename(name||"무제"); setEditing(false);}, className:"text-xs px-2 py-1 bg-white rounded-xl shadow flex items-center gap-1"}, "💾 저장") :
+                         e("button",{onClick:()=>setEditing(true), className:"text-xs px-2 py-1 bg-white rounded-xl shadow flex items-center gap-1"}, "✎ 이름"),
+                e("button",{onClick:onAddGoal, className:"text-xs px-2 py-1 bg-white rounded-xl shadow flex items-center gap-1"}, "＋ 목표")
+              )
+            ),
+            e("div",{className:"mt-2 grid gap-2"},
+              area.goals.map((g)=>
+                e(GoalCard,{
+                  key:g.id, goal:g, onToggle:()=>onToggle("goal",{goalId:g.id}), onSetTitle:(t)=>onSetTitle("goal",{goalId:g.id}, t),
+                  onAddAction:()=>onAddAction(g.id), onRemove:()=>onRemove("goal",{goalId:g.id}), onMoveUp:()=>onMove("goal",{goalId:g.id}, -1),
+                  onMoveDown:()=>onMove("goal",{goalId:g.id}, 1), onToggleAction:(aid)=>onToggle("action",{actionId:aid}),
+                  onTitleAction:(aid,t)=>onSetTitle("action",{actionId:aid}, t), onAddSubtask:(aid)=>onAddSubtask(aid),
+                  onRemoveAction:(aid)=>onRemove("action",{actionId:aid}), onMoveAction:(aid,dir)=>onMove("action",{actionId:aid}, dir),
+                  onToggleSubtask:(sid)=>onToggle("subtask",{subtaskId:sid}), onTitleSubtask:(sid,t)=>onSetTitle("subtask",{subtaskId:sid}, t),
+                  onRemoveSubtask:(sid)=>onRemove("subtask",{subtaskId:sid}), onMoveSubtask:(sid,dir)=>onMove("subtask",{subtaskId:sid}, dir)
                 })
+              )
+            )
+          );
+        }
+
+        function GoalCard({ goal, onToggle, onSetTitle, onAddAction, onRemove, onMoveUp, onMoveDown,
+          onToggleAction, onTitleAction, onAddSubtask, onRemoveAction, onMoveAction,
+          onToggleSubtask, onTitleSubtask, onRemoveSubtask, onMoveSubtask }){
+          const [t, setT] = useState(goal.title);
+          useEffect(()=>setT(goal.title),[goal.title]);
+          return e("div",{className:"bg-white rounded-2xl shadow p-3"},
+            e("div",{className:"flex items-center justify-between"},
+              e("label",{className:"flex items-center gap-2"},
+                e("input",{type:"checkbox", checked:!!goal.completed, onChange:onToggle, className:"w-4 h-4"}),
+                e("input",{value:t, onChange:(ev)=>setT(ev.target.value), onBlur:()=>onSetTitle(t||"(제목 없음)"), className:"text-sm font-medium bg-transparent focus:outline-none"})
               ),
-              w.notes && React.createElement("div",{className:"mt-2 text-xs text-neutral-600 line-clamp-2"},"메모: ", w.notes)
-            ))
-          )
-        );
-      }
+              e("div",{className:"flex items-center gap-1"},
+                e("button",{onClick:onMoveUp, className:"btn"},"▲"),
+                e("button",{onClick:onMoveDown, className:"btn"},"▼"),
+                e("button",{onClick:onAddAction, className:"btn"},"행동＋"),
+                e("button",{onClick:onRemove, className:"btn btn-red"},"🗑️ 삭제")
+              )
+            ),
+            e("div",{className:"mt-2 grid gap-2"},
+              (goal.actions||[]).map((a)=>
+                e(ActionRow,{
+                  key:a.id, action:a, onToggle:()=>onToggleAction(a.id), onSetTitle:(txt)=>onTitleAction(a.id, txt),
+                  onAddSubtask:()=>onAddSubtask(a.id), onRemove:()=>onRemoveAction(a.id), onMoveUp:()=>onMoveAction(a.id, -1),
+                  onMoveDown:()=>onMoveAction(a.id, 1), onToggleSubtask:(sid)=>onToggleSubtask(sid), onTitleSubtask:(sid,t)=>onTitleSubtask(sid,t),
+                  onRemoveSubtask:(sid)=>onRemoveSubtask(sid), onMoveSubtask:(sid,dir)=>onMoveSubtask(sid, dir)
+                })
+              )
+            )
+          );
+        }
 
-      const root = createRoot(document.getElementById("root"));
-      function TabButton({ active, onClick, icon, label }){
-        return React.createElement("button",{onClick:onClick, className:`flex-1 py-2 text-xs flex flex-col items-center ${active ? "text-black":"text-neutral-500"}`},
-          icon, React.createElement("span",{className:"mt-1"},label));
-      }
+        function ActionRow({ action, onToggle, onSetTitle, onAddSubtask, onRemove, onMoveUp, onMoveDown,
+          onToggleSubtask, onTitleSubtask, onRemoveSubtask, onMoveSubtask }){
+          const [t, setT] = useState(action.title);
+          useEffect(()=>setT(action.title),[action.title]);
+          return e("div",{className:"rounded-xl border p-2"},
+            e("div",{className:"flex items-center justify-between"},
+              e("label",{className:"flex items-center gap-2"},
+                e("input",{type:"checkbox", checked:!!action.completed, onChange:onToggle, className:"w-4 h-4"}),
+                e("input",{value:t, onChange:(ev)=>setT(ev.target.value), onBlur:()=>onSetTitle(t||"(무제)"), className:"text-sm bg-transparent focus:outline-none"})
+              ),
+              e("div",{className:"flex items-center gap-1"},
+                e("button",{onClick:onMoveUp, className:"btn"},"▲"),
+                e("button",{onClick:onMoveDown, className:"btn"},"▼"),
+                e("button",{onClick:onAddSubtask, className:"btn"},"세부"),
+                e("button",{onClick:onRemove, className:"btn btn-red"},"🗑️ 삭제")
+              )
+            ),
+            e("div",{className:"mt-2 grid gap-1"},
+              (action.subtasks||[]).map((s)=>
+                e(SubtaskRow,{
+                  key:s.id, subtask:s, onToggle:()=>onToggleSubtask(s.id), onSetTitle:(txt)=>onTitleSubtask(s.id, txt),
+                  onRemove:()=>onRemoveSubtask(s.id), onMoveUp:()=>onMoveSubtask(s.id, -1), onMoveDown:()=>onMoveSubtask(s.id, 1)
+                })
+              )
+            )
+          );
+        }
 
-      root.render(React.createElement(App));
+        function SubtaskRow({ subtask, onToggle, onSetTitle, onRemove, onMoveUp, onMoveDown }){
+          const [t, setT] = useState(subtask.title);
+          useEffect(()=>setT(subtask.title),[subtask.title]);
+          return e("div",{className:"flex items-center justify-between px-2 py-1 rounded-lg bg-neutral-50"},
+            e("label",{className:"flex items-center gap-2"},
+              e("input",{type:"checkbox", checked:!!subtask.completed, onChange:onToggle, className:"w-4 h-4"}),
+              e("input",{value:t, onChange:(ev)=>setT(ev.target.value), onBlur:()=>onSetTitle(t||"(세부)"), className:"text-sm bg-transparent focus:outline-none"})
+            ),
+            e("div",{className:"flex items-center gap-1"},
+              e("button",{onClick:onMoveUp, className:"btn"},"▲"),
+              e("button",{onClick:onMoveDown, className:"btn"},"▼"),
+              e("button",{onClick:onRemove, className:"btn btn-red"},"🗑️ 삭제")
+            )
+          );
+        }
+
+        function HistoryPage({ db, setActiveWeekId, setPage }){
+          return e("main",{className:"p-3 pb-24 max-w-screen-sm mx-auto"},
+            e("div",{className:"text-sm text-neutral-600 mb-2"},"지난 주차 기록을 간단히 확인하고 열람할 수 있어요."),
+            e("div",{className:"grid gap-2"},
+              db.weeks.map((w,i)=> e("button",{key:w.id, onClick:()=>{ setActiveWeekId(w.id); setPage("dashboard"); }, className:"w-full text-left bg-white rounded-2xl shadow p-3"},
+                e("div",{className:"flex items-center justify-between"},
+                  e("div",{className:"font-medium"}, formatWeek(new Date(w.weekStartISO))),
+                  e("div",{className:"text-xs text-neutral-500"}, i===db.weeks.length-1 ? "최근" : `${db.weeks.length-1-i}주 전`)
+                ),
+                e("div",{className:"mt-2 grid grid-cols-2 gap-2"},
+                  w.areas.map((a)=>{ const { total, done } = countProgress(a); const pct = total ? Math.round((done/total)*100) : 0;
+                    return e("div",{key:a.id, className:"text-xs flex items-center justify-between bg-neutral-50 rounded-xl px-2 py-1"},
+                      e("span",{className:"truncate"}, a.name),
+                      e("span",{className:"tabular-nums"}, `${done}/${total} (${pct}%)`)
+                    );
+                  })
+                ),
+                w.notes && e("div",{className:"mt-2 text-xs text-neutral-600 line-clamp-2"},"메모: ", w.notes)
+              ))
+            )
+          );
+        }
+
+        // Mount
+        const root = ReactDOM.createRoot(document.getElementById("root"));
+        root.render(React.createElement(App));
+      })();
     </script>
 
     <script>
-      // SW fallback registration
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
           navigator.serviceWorker.register('/sw.js').catch(()=>{});
@@ -346,6 +341,6 @@
       }
     </script>
 
-    <!-- Prevent Jekyll from interfering -->
+    <div style="display:none"><!-- .nojekyll placeholder --></div>
   </body>
 </html>

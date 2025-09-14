@@ -1,4 +1,4 @@
-const CACHE_NAME = 'v4a-cache-root-v2';
+const CACHE_NAME = 'v4a-cache-root-umd-v1';
 const PRECACHE_URLS = ['/', '/index.html', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
 
 self.addEventListener('install', (event) => {
